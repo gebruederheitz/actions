@@ -1,7 +1,7 @@
 # Shared GitHub Actions
 
 Reusable composite actions shared across our projects. Reference them from a
-workflow with `uses: <owner>/<repo>/<action>@<ref>`.
+workflow with `uses: gebruederheitz/actions/<action>@<ref>`.
 
 ## Actions
 
@@ -25,7 +25,57 @@ PHP, and can optionally set up [go-task](https://taskfile.dev/).
 #### Usage
 
 ```yaml
-- uses: <owner>/<repo>/cached-asdf@v1
+- uses: gebruederheitz/actions/cached-asdf@v1
   with:
     setup-task: "true"
 ```
+
+### `composer-cache`
+
+Caches Composer packages (the vendor directory and Composer's local cache)
+between workflow runs.
+
+#### Inputs
+
+| Name          | Default  | Description                                          |
+| ------------- | -------- | ---------------------------------------------------- |
+| `vendor_path` | `vendor` | Path to the vendor directory Composer installs into. |
+
+#### Outputs
+
+| Name        | Description                                                     |
+| ----------- | -------------------------------------------------------------- |
+| `cache-hit` | `true` when the vendor directory was restored from cache.      |
+
+#### Usage
+
+```yaml
+- uses: gebruederheitz/actions/composer-cache@v1
+  id: composer-cache
+- run: composer install
+  if: steps.composer-cache.outputs.cache-hit != 'true'
+```
+
+## Releasing
+
+Releases are cut locally with [release-it](https://github.com/release-it/release-it)
+via [go-task](https://taskfile.dev/). One-time setup:
+
+```bash
+npm install
+export GITHUB_TOKEN=<a token with repo scope>   # used to publish the GitHub release
+```
+
+Then:
+
+```bash
+task release
+```
+
+This prompts for the next semantic version (based on the current one), creates and
+pushes the `vX.Y.Z` tag, publishes a GitHub release, and force-moves the floating
+major tag (e.g. `v1`) to the new release so consumers pinned to `@v1` pick it up.
+
+> Consumers pin to the major tag, e.g. `uses: gebruederheitz/actions/cached-asdf@v1`.
+> If moving the major tag ever fails after a release, re-run it manually:
+> `task major-tag TAG=v1.2.0`.

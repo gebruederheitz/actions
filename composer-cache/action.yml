@@ -1,0 +1,34 @@
+name: composer-cache
+description: >
+  Caches composer packages.
+inputs:
+  vendor_path:
+    description: >
+      Path to the vendor directory, where Composer installs packages.
+    required: false
+    default: "vendor"
+outputs:
+  cache-hit:
+    description: >
+      Whether an exact match was found for the Composer packages cache
+      (true when the vendor directory was restored from cache).
+    value: ${{ steps.composer-cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Cache Composer packages
+      id: composer-cache
+      uses: actions/cache@v6
+      with:
+        path: ${{ inputs.vendor_path }}
+        key: composer-cache-${{ github.ref_name }}-v1-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          composer-cache-${{ github.ref_name }}-v1-
+
+    - name: Cache Composer local
+      uses: actions/cache@v6
+      with:
+        path: ~/.cache/composer
+        key: composer-local-cache-${{ github.ref_name }}-v1
+        restore-keys: |
+          composer-local-cache-${{ github.ref_name }}-
