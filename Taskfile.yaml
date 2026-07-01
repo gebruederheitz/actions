@@ -1,0 +1,20 @@
+version: "3"
+
+tasks:
+  release:
+    desc: Create a new release interactively (pick the next semver, tag, and publish).
+    cmds:
+      - npx release-it {{.CLI_ARGS}}
+
+  # Force-move the major tag (e.g. v1) to point at TAG. Invoked by release-it's
+  # after:release hook; also runnable manually for recovery: task major-tag TAG=v1.2.0
+  major-tag:
+    vars:
+      MAJOR:
+        sh: echo "{{.TAG}}" | sed -E 's/^(v[0-9]+).*/\1/'
+    preconditions:
+      - sh: 'echo "{{.TAG}}" | grep -qE "^v[0-9]+\.[0-9]+\.[0-9]+$"'
+        msg: 'TAG must be a semver tag like v1.2.0 (got "{{.TAG}}").'
+    cmds:
+      - git tag -fa "{{.MAJOR}}" -m "Update {{.MAJOR}} to {{.TAG}}" "{{.TAG}}"
+      - git push origin "{{.MAJOR}}" --force
