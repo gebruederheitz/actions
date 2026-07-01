@@ -1,0 +1,57 @@
+name: cached-asdf
+description: >
+  Install asdf and all required languages, caching the languages between workflow runs.
+  Installs PHP build-time dependencies when the .tool-versions file requests PHP, and
+  optionally sets up go-task.
+inputs:
+  setup-task:
+    description: >
+      Whether to set up go-task. Set this to "true" if your workflow requires go-task.
+    required: false
+    default: "false"
+  tool-versions-path:
+    description: >
+      Path to the .tool-versions file inspected to decide whether build-time
+      dependencies (e.g. for PHP) are required.
+    required: false
+    default: .tool-versions
+runs:
+  using: composite
+  steps:
+    - uses: actions/checkout@v7
+    - name: Install asdf base
+      uses: asdf-vm/actions/setup@v4
+    - name: Set up asdf cache
+      id: asdf-cache
+      uses: actions/cache@v6
+      with:
+        path: ~/.asdf/
+        key: ${{ runner.os }}-asdf-${{ hashFiles('**/.tool-versions') }}
+        restore-keys: |
+          ${{ runner.os }}-asdf-
+    - name: Check for PHP
+      id: check-php
+      if: steps.asdf-cache.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        TOOL_VERSIONS: ${{ inputs.tool-versions-path }}
+      run: |
+        if [ -f "$TOOL_VERSIONS" ] && grep -qE '^php[[:space:]]' "$TOOL_VERSIONS"; then
+          echo "php-required=true" >> "$GITHUB_OUTPUT"
+        else
+          echo "php-required=false" >> "$GITHUB_OUTPUT"
+        fi
+    - name: Install PHP build-time dependencies
+      if: steps.asdf-cache.outputs.cache-hit != 'true' && steps.check-php.outputs.php-required == 'true'
+      shell: bash
+      run: >
+        wget -qO- "https://raw.githubusercontent.com/php-build/php-build/refs/heads/master/install-dependencies.sh" 
+        | /bin/sh
+        && sudo apt-get install libgd-dev
+    - name: Install languages if required
+      if: steps.asdf-cache.outputs.cache-hit != 'true'
+      uses: asdf-vm/actions/install@v4
+    - name: Setup go-task
+      if: inputs.setup-task == 'true'
+      uses: go-task/setup-task@v2
+
