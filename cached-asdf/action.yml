@@ -15,6 +15,15 @@ inputs:
       dependencies (e.g. for PHP) are required.
     required: false
     default: .tool-versions
+  repo-token:
+    description: >
+      (optional) When using "setup-task", pass this GitHub token to `go-task/setup-task`;
+      see https://github.com/go-task/setup-task#repo-token
+      > Heavy usage of the action can result in workflow run failures caused by 
+      > rate limiting. GitHub provides a more generous allowance for Authenticated 
+      > API requests.
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
@@ -54,4 +63,6 @@ runs:
     - name: Setup go-task
       if: inputs.setup-task == 'true'
       uses: go-task/setup-task@v2
+      with:
+        repo-token: '${{ inputs.repo-token }}'
 
