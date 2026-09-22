@@ -28,7 +28,7 @@ inputs:
     description: >
       The version of asdf to install. Defaults to the latest stable version.
     required: false
-    default: ''
+    default: 'latest'
 runs:
   using: composite
   steps:
@@ -67,6 +67,9 @@ runs:
     - name: Install languages if required
       if: steps.asdf-cache.outputs.cache-hit != 'true'
       uses: asdf-vm/actions/install@v4
+      with:
+        asdf_version: '${{ inputs.asdf-version }}'
+        tool_versions_path: '${{ inputs.tool-versions-path }}'
     - name: Setup go-task
       if: inputs.setup-task == 'true'
       uses: go-task/setup-task@v2

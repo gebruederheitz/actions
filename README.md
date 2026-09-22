@@ -18,7 +18,7 @@ PHP, and can optionally set up [go-task](https://taskfile.dev/).
 |----------------------|------------------|-------------------------------------------------------------------------------------------------|
 | `setup-task`         | `"false"`        | Set to `"true"` to install go-task.                                                             |
 | `tool-versions-path` | `.tool-versions` | Path to the `.tool-versions` file inspected to decide whether PHP build-time deps are required. |
-| `asdf_version'       | `''`             | The version of asdf to install. Defaults to the latest stable version.                                |
+| `asdf-version`       | `latest `        | The version of asdf to install. Defaults to the latest stable version.                                |
 
 > **Note:** GitHub Actions inputs are always strings, so boolean-like inputs are
 > passed and compared as `"true"` / `"false"`.
