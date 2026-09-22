@@ -24,12 +24,19 @@ inputs:
       > API requests.
     required: false
     default: ''
+  asdf-version:
+    description: >
+      The version of asdf to install. Defaults to the latest stable version.
+    required: false
+    default: ''
 runs:
   using: composite
   steps:
     - uses: actions/checkout@v7
     - name: Install asdf base
       uses: asdf-vm/actions/setup@v4
+      with:
+        asdf_version: ${{ inputs.asdf-version }}
     - name: Set up asdf cache
       id: asdf-cache
       uses: actions/cache@v6
