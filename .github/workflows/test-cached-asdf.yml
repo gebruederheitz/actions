@@ -1,0 +1,114 @@
+name: Test cached-asdf
+
+on:
+  pull_request:
+    paths: &paths
+      - cached-asdf/**
+      - .github/fixtures/cached-asdf/**
+      - .github/workflows/test-cached-asdf.yml
+      - .tool-versions
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # delete this ref's cache entry so the cold job really runs cold
+
+jobs:
+  # asdf-vm/actions/install always installs from the root .tool-versions
+  # (nodejs only, which downloads a prebuilt binary), so no PHP is compiled in
+  # this repository's CI. cold and warm test the cache path without the PHP
+  # build dependencies (no apt); php-build-deps passes a fixture requesting PHP
+  # as tool-versions-path, which makes the action run its apt step for real.
+  cold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - &delete-cache
+        name: Delete this ref's exact cache entry from earlier runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Must match the key cached-asdf computes.
+          CACHE_KEY: ${{ runner.os }}-asdf-${{ hashFiles('**/.tool-versions') }}
+        run: >
+          gh api -X DELETE
+          "repos/$GITHUB_REPOSITORY/actions/caches?key=$CACHE_KEY&ref=$GITHUB_REF"
+          || echo "No cache entry to delete."
+
+      - name: Run cached-asdf
+        id: asdf
+        uses: ./cached-asdf
+
+      - name: Assert a cold run
+        env:
+          CACHE_HIT: ${{ steps.asdf.outputs.cache-hit }}
+        run: |
+          test "$CACHE_HIT" != "true"
+          test "$(node --version)" = "v$(awk '$1 == "nodejs" { print $2 }' .tool-versions)"
+
+      - &assert-saved
+        name: Assert the cache was saved before the job ends
+        uses: actions/cache/restore@v6
+        with:
+          path: ~/.asdf/
+          key: ${{ runner.os }}-asdf-${{ hashFiles('**/.tool-versions') }}
+          lookup-only: true
+          fail-on-cache-miss: true
+
+  warm:
+    needs: cold
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run cached-asdf
+        id: asdf
+        uses: ./cached-asdf
+
+      - name: Assert an exact cache hit
+        env:
+          CACHE_HIT: ${{ steps.asdf.outputs.cache-hit }}
+        run: |
+          test "$CACHE_HIT" = "true"
+          test "$(node --version)" = "v$(awk '$1 == "nodejs" { print $2 }' .tool-versions)"
+
+  # Runs after warm because it deletes the same cache entry.
+  php-build-deps:
+    needs: warm
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Show apt network settings preset by the runner image
+        run: apt-config dump | grep -iE 'retries|timeout' || echo "(none)"
+
+      - name: Probe the Ubuntu mirrors (informational)
+        run: |
+          for url in $(grep -oE 'https?://[^[:space:]]+' /etc/apt/apt-mirrors.txt 2>/dev/null) http://security.ubuntu.com/ubuntu/; do
+            code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$url") || true
+            echo "$url -> ${code:-no response}"
+          done
+
+      - *delete-cache
+
+      - name: Run cached-asdf
+        id: asdf
+        uses: ./cached-asdf
+        with:
+          tool-versions-path: .github/fixtures/cached-asdf/.tool-versions
+
+      - name: Assert the PHP build dependencies are installed
+        env:
+          CACHE_HIT: ${{ steps.asdf.outputs.cache-hit }}
+        run: |
+          test "$CACHE_HIT" != "true"
+          dpkg-query -W libgd-dev libmcrypt-dev libonig-dev libtidy-dev re2c
+
+      - *assert-saved
