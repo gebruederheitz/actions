@@ -30,6 +30,13 @@ jobs:
       - name: Show apt network settings preset by the runner image
         run: apt-config dump | grep -iE 'retries|timeout' || echo "(none)"
 
+      - name: Probe the Ubuntu mirrors (informational)
+        run: |
+          for url in $(cat /etc/apt/apt-mirrors.txt 2>/dev/null) http://security.ubuntu.com/ubuntu/; do
+            code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$url") || true
+            echo "$url -> ${code:-no response}"
+          done
+
       - name: Delete this ref's exact cache entry from earlier runs
         env:
           GH_TOKEN: ${{ github.token }}
