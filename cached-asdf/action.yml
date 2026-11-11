@@ -105,15 +105,17 @@ runs:
           libgd-dev
         )
         # Bound network waits so an unreachable mirror fails the step within
-        # minutes instead of hanging: apt's own retries and timeouts, plus a hard
-        # ceiling per command (composite steps cannot set timeout-minutes).
+        # minutes instead of hanging. The retry and timeout values match what
+        # GitHub's Ubuntu images preset (stated here for runners without them);
+        # the hard ceilings are ~10x a healthy run (composite steps cannot set
+        # timeout-minutes).
         apt_opts=(
-          -o Acquire::Retries=3
-          -o Acquire::http::Timeout=30
-          -o Acquire::https::Timeout=30
+          -o Acquire::Retries=1
+          -o Acquire::http::Timeout=15
+          -o Acquire::https::Timeout=15
         )
-        sudo DEBIAN_FRONTEND=noninteractive timeout 5m apt-get "${apt_opts[@]}" -q update
-        sudo DEBIAN_FRONTEND=noninteractive timeout 10m apt-get "${apt_opts[@]}" -q -y \
+        sudo DEBIAN_FRONTEND=noninteractive timeout 2m apt-get "${apt_opts[@]}" -q update
+        sudo DEBIAN_FRONTEND=noninteractive timeout 5m apt-get "${apt_opts[@]}" -q -y \
           --no-install-recommends install "${packages[@]}"
     - name: Install languages if required
       if: steps.asdf-cache.outputs.cache-hit != 'true'

@@ -37,9 +37,10 @@ When the cache is not an exact hit and `.tool-versions` requests PHP, the action
 installs the Debian/Ubuntu packages needed to compile PHP with `apt-get`. The
 package list is vendored in [`cached-asdf/action.yml`](cached-asdf/action.yml) instead
 of downloading and running php-build's script at run time. apt's network waits are
-bounded (3 retries, 30 s timeouts, and a hard limit of 5 minutes for
-`apt-get update` and 10 minutes for `apt-get install`), so an unreachable Ubuntu
-mirror fails the step instead of hanging the job.
+bounded (1 retry and 15 s timeouts, as preset on GitHub's Ubuntu images, plus a
+hard limit of 2 minutes for `apt-get update` and 5 minutes for `apt-get install`),
+so an unreachable Ubuntu mirror fails the step within about 7 minutes instead of
+hanging the job. A healthy run of the step takes well under a minute.
 
 The list is php-build's, plus `libgd-dev`:
 
