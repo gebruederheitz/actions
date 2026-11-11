@@ -80,8 +80,8 @@ Unlike `cached-asdf`, this action **does not check out** the repository: run
   `php-coverage: none` to turn Xdebug off when you don't collect coverage, which
   speeds up tests and static analysis.
 - **pnpm and `packageManager`:** if `package.json` also declares
-  a different `"packageManager": "pnpm@…"`, `pnpm/action-setup` fails with
-  "Multiple versions of pnpm specified". Keep the version in `.tool-versions` only.
+  `"packageManager": "pnpm@…"` with a different version, `pnpm/action-setup` fails
+  with "Multiple versions of pnpm specified". The same version is fine.
 - **No apt:** on GitHub-hosted Ubuntu runners setup-php downloads a prebuilt PHP
   from GitHub instead of installing packages with apt, so an Ubuntu mirror or PPA
   outage doesn't break the setup. The test workflow checks this with every apt host
@@ -91,7 +91,8 @@ Unlike `cached-asdf`, this action **does not check out** the repository: run
 
 Add `actions/checkout` before the action if the job relied on `cached-asdf`'s
 checkout, replace `cached-asdf` with `setup-tool-versions`, drop `asdf-version`, and
-remove `packageManager` from `package.json` if it names pnpm.
+make sure a `packageManager` field in `package.json` names the same pnpm version as
+`.tool-versions` (or remove it).
 
 ### `cached-asdf`
 
