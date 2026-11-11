@@ -83,30 +83,31 @@ jobs:
           grep -qE '^(Err|W):' /tmp/apt.log
 
       - name: Run setup-tool-versions
-        id: tools
-        continue-on-error: true
         uses: ./setup-tool-versions
         with:
           tool-versions-path: ${{ env.FIXTURE }}
           php-extensions: ${{ matrix.extensions }}
 
-      - name: Report
-        env:
-          OUTCOME: ${{ steps.tools.outcome }}
-          EXTENSIONS: ${{ matrix.extensions }}
-        run: |
-          echo "extensions='$EXTENSIONS' outcome=$OUTCOME" | tee -a "$GITHUB_STEP_SUMMARY"
-          php -m || true
+      - name: Assert PHP works
+        run: php -r 'echo PHP_VERSION, PHP_EOL;'
 
-  pnpm-package-manager-conflict:
+  # Records how pnpm/action-setup treats a packageManager field next to the
+  # version from .tool-versions (documented in the README).
+  pnpm-package-manager:
+    strategy:
+      fail-fast: false
+      matrix:
+        package-manager: [pnpm@11.0.0, pnpm@12.18.0]
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v7
 
-      - name: Declare a different pnpm version in package.json
+      - name: Declare pnpm in package.json
+        env:
+          PACKAGE_MANAGER: ${{ matrix.package-manager }}
         run: |
-          jq '.packageManager = "pnpm@11.0.0"' package.json > package.json.new
+          jq --arg pm "$PACKAGE_MANAGER" '.packageManager = $pm' package.json > package.json.new
           mv package.json.new package.json
 
       - name: Run setup-tool-versions
@@ -119,8 +120,9 @@ jobs:
       - name: Report
         env:
           OUTCOME: ${{ steps.tools.outcome }}
+          PACKAGE_MANAGER: ${{ matrix.package-manager }}
         run: |
-          echo "outcome=$OUTCOME" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "packageManager=$PACKAGE_MANAGER outcome=$OUTCOME" | tee -a "$GITHUB_STEP_SUMMARY"
           pnpm --version || true
 
   unsupported-tool:
