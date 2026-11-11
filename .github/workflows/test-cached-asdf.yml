@@ -32,7 +32,7 @@ jobs:
 
       - name: Probe the Ubuntu mirrors (informational)
         run: |
-          for url in $(cat /etc/apt/apt-mirrors.txt 2>/dev/null) http://security.ubuntu.com/ubuntu/; do
+          for url in $(grep -oE 'https?://[^[:space:]]+' /etc/apt/apt-mirrors.txt 2>/dev/null) http://security.ubuntu.com/ubuntu/; do
             code=$(curl -s -o /dev/null -m 10 -w '%{http_code}' "$url") || true
             echo "$url -> ${code:-no response}"
           done
