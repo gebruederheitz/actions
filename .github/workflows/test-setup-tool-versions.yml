@@ -91,13 +91,37 @@ jobs:
       - name: Assert PHP works
         run: php -r 'echo PHP_VERSION, PHP_EOL;'
 
-  # Records how pnpm/action-setup treats a packageManager field next to the
-  # version from .tool-versions (documented in the README).
+  php-options:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run setup-tool-versions
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+          php-coverage: none
+          php-extensions: ":redis"
+          php-ini-values: memory_limit=1234M
+
+      - name: Assert the PHP options were applied
+        run: |
+          php -m | tee /tmp/modules
+          if grep -qix -e xdebug -e redis /tmp/modules; then exit 1; fi
+          grep -qix intl /tmp/modules
+          test "$(php -r 'echo ini_get("memory_limit");')" = 1234M
+
+  # pnpm/action-setup rejects a packageManager field naming another version.
   pnpm-package-manager:
     strategy:
       fail-fast: false
       matrix:
-        package-manager: [pnpm@11.0.0, pnpm@12.18.0]
+        include:
+          - package-manager: pnpm@11.0.0
+            expected: failure
+          - package-manager: pnpm@12.18.0
+            expected: success
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -117,13 +141,11 @@ jobs:
         with:
           tool-versions-path: ${{ env.FIXTURE }}
 
-      - name: Report
+      - name: Assert the outcome
         env:
           OUTCOME: ${{ steps.tools.outcome }}
-          PACKAGE_MANAGER: ${{ matrix.package-manager }}
-        run: |
-          echo "packageManager=$PACKAGE_MANAGER outcome=$OUTCOME" | tee -a "$GITHUB_STEP_SUMMARY"
-          pnpm --version || true
+          EXPECTED: ${{ matrix.expected }}
+        run: test "$OUTCOME" = "$EXPECTED"
 
   unsupported-tool:
     runs-on: ubuntu-latest

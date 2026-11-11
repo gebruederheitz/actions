@@ -1,3 +1,4 @@
-php 8.4.16
+# php deliberately not first: setup-php must find its line anywhere in the file
 nodejs 26.13.0
 pnpm 12.18.0
+php 8.4.16
