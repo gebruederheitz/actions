@@ -1,0 +1,102 @@
+name: setup-tool-versions
+description: >
+  Install the tools listed in an asdf .tool-versions file from prebuilt binaries:
+  PHP with shivammathur/setup-php, Node.js with actions/setup-node and pnpm with
+  pnpm/action-setup. Nothing is compiled and nothing is cached. Optionally sets up
+  go-task.
+inputs:
+  tool-versions-path:
+    description: >
+      Path to the .tool-versions file. It may list php, nodejs and pnpm; any other
+      tool fails the action.
+    required: false
+    default: .tool-versions
+  php-extensions:
+    description: >
+      Passed to shivammathur/setup-php as "extensions", e.g. "intl, redis".
+    required: false
+    default: ''
+  php-ini-values:
+    description: >
+      Passed to shivammathur/setup-php as "ini-values", e.g. "memory_limit=1G".
+    required: false
+    default: ''
+  php-coverage:
+    description: >
+      Passed to shivammathur/setup-php as "coverage" ("xdebug", "pcov" or "none").
+    required: false
+    default: ''
+  setup-task:
+    description: >
+      Whether to set up go-task. Set this to "true" if your workflow requires go-task.
+    required: false
+    default: "false"
+  repo-token:
+    description: >
+      (optional) When using "setup-task", pass this GitHub token to `go-task/setup-task`
+      to avoid rate limiting; see https://github.com/go-task/setup-task#repo-token
+    required: false
+    default: ''
+outputs:
+  php-version:
+    description: The installed PHP version (e.g. "8.4.16"), empty when PHP is not listed.
+    value: ${{ steps.php-version.outputs.installed }}
+  node-version:
+    description: The Node.js version from .tool-versions, empty when it is not listed.
+    value: ${{ steps.tools.outputs.nodejs }}
+  pnpm-version:
+    description: The pnpm version from .tool-versions, empty when it is not listed.
+    value: ${{ steps.tools.outputs.pnpm }}
+runs:
+  using: composite
+  steps:
+    - name: Read .tool-versions
+      id: tools
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/read-tool-versions.sh" "$TOOL_VERSIONS"'
+      env:
+        TOOL_VERSIONS: ${{ inputs.tool-versions-path }}
+
+    - name: Set up PHP
+      if: steps.tools.outputs.php != ''
+      id: setup-php
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version-file: ${{ inputs.tool-versions-path }}
+        extensions: ${{ inputs.php-extensions }}
+        ini-values: ${{ inputs.php-ini-values }}
+        coverage: ${{ inputs.php-coverage }}
+
+    # setup-php only resolves major.minor and installs the newest patch release
+    # it has a build for, so a full version in .tool-versions is not guaranteed.
+    - name: Check the installed PHP version
+      if: steps.tools.outputs.php != ''
+      id: php-version
+      shell: bash
+      run: |
+        installed=$(php -r 'echo PHP_VERSION;')
+        echo "installed=$installed" >> "$GITHUB_OUTPUT"
+        case "$installed" in
+          "$REQUESTED" | "$REQUESTED".*) ;;
+          *) echo "::warning::.tool-versions requests PHP $REQUESTED, setup-php installed PHP $installed. setup-php installs the latest available patch release of a minor version." ;;
+        esac
+      env:
+        REQUESTED: ${{ steps.tools.outputs.php }}
+
+    - name: Set up Node.js
+      if: steps.tools.outputs.nodejs != ''
+      uses: actions/setup-node@v7
+      with:
+        node-version-file: ${{ inputs.tool-versions-path }}
+
+    - name: Set up pnpm
+      if: steps.tools.outputs.pnpm != ''
+      uses: pnpm/action-setup@v6
+      with:
+        version: ${{ steps.tools.outputs.pnpm }}
+
+    - name: Set up go-task
+      if: inputs.setup-task == 'true'
+      uses: go-task/setup-task@v2
+      with:
+        repo-token: ${{ inputs.repo-token }}
