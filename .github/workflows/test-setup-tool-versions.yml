@@ -1,0 +1,142 @@
+name: Test setup-tool-versions
+
+on:
+  pull_request:
+    paths: &paths
+      - setup-tool-versions/**
+      - .github/fixtures/setup-tool-versions/**
+      - .github/workflows/test-setup-tool-versions.yml
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FIXTURE: .github/fixtures/setup-tool-versions/.tool-versions
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run setup-tool-versions
+        id: tools
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+          setup-task: "true"
+          repo-token: ${{ github.token }}
+
+      - name: Assert the installed versions
+        env:
+          PHP_VERSION: ${{ steps.tools.outputs.php-version }}
+        run: |
+          requested() { awk -v tool="$1" '$1 == tool { print $2 }' "$FIXTURE"; }
+          php_minor=$(requested php | cut -d. -f1,2)
+          echo "PHP: requested $(requested php), installed $PHP_VERSION"
+          test "$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')" = "$php_minor"
+          test "$PHP_VERSION" = "$(php -r 'echo PHP_VERSION;')"
+          test "$(node --version)" = "v$(requested nodejs)"
+          test "$(pnpm --version)" = "$(requested pnpm)"
+          task --version
+          composer --version
+
+      - name: Show where PHP came from
+        run: |
+          ls -l "$(command -v php)" "$(readlink -f "$(command -v php)")"
+          dpkg -S "$(readlink -f "$(command -v php)")" || echo "PHP binary is not owned by a dpkg package."
+          grep -rl ondrej /etc/apt/sources.list.d/ || echo "No ondrej PPA configured."
+
+  # Simulates an Ubuntu mirror / PPA outage: every host apt is configured to
+  # use, plus the Launchpad PPA hosts, resolves to 127.0.0.1.
+  apt-unreachable:
+    strategy:
+      fail-fast: false
+      matrix:
+        extensions: ["", "bcmath, gd, intl, pdo_sqlite, zip", "redis"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Make apt mirrors and PPAs unreachable
+        run: |
+          hosts=$(
+            {
+              grep -rhoE '(https?|mirror\+file):[^ ]+' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null || true
+              cat /etc/apt/apt-mirrors.txt 2>/dev/null || true
+              echo http://ppa.launchpadcontent.net/ http://ppa.launchpad.net/ http://keyserver.ubuntu.com/ http://api.launchpad.net/
+            } | grep -oE 'https?://[^/[:space:]]+' | sed -E 's#https?://##' | sort -u
+          )
+          echo "Blocking: $hosts"
+          for host in $hosts; do echo "127.0.0.1 $host" | sudo tee -a /etc/hosts >/dev/null; done
+          if timeout 30 sudo apt-get -o Acquire::Retries=0 -q update 2>&1 | tee /tmp/apt.log; then :; fi
+          grep -qE '^(Err|W):' /tmp/apt.log
+
+      - name: Run setup-tool-versions
+        id: tools
+        continue-on-error: true
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+          php-extensions: ${{ matrix.extensions }}
+
+      - name: Report
+        env:
+          OUTCOME: ${{ steps.tools.outcome }}
+          EXTENSIONS: ${{ matrix.extensions }}
+        run: |
+          echo "extensions='$EXTENSIONS' outcome=$OUTCOME" | tee -a "$GITHUB_STEP_SUMMARY"
+          php -m || true
+
+  pnpm-package-manager-conflict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Declare a different pnpm version in package.json
+        run: |
+          jq '.packageManager = "pnpm@11.0.0"' package.json > package.json.new
+          mv package.json.new package.json
+
+      - name: Run setup-tool-versions
+        id: tools
+        continue-on-error: true
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+
+      - name: Report
+        env:
+          OUTCOME: ${{ steps.tools.outcome }}
+        run: |
+          echo "outcome=$OUTCOME" | tee -a "$GITHUB_STEP_SUMMARY"
+          pnpm --version || true
+
+  unsupported-tool:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run setup-tool-versions
+        id: tools
+        continue-on-error: true
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: .github/fixtures/setup-tool-versions/unsupported/.tool-versions
+
+      - name: Assert the action failed
+        env:
+          OUTCOME: ${{ steps.tools.outcome }}
+        run: test "$OUTCOME" = failure
