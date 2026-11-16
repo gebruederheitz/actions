@@ -29,6 +29,12 @@ inputs:
       The version of asdf to install. Defaults to the latest stable version.
     required: false
     default: 'latest'
+outputs:
+  cache-hit:
+    description: >
+      "true" when the asdf cache was restored for the exact .tool-versions hash, in
+      which case nothing was installed.
+    value: ${{ steps.asdf-cache.outputs.cache-hit }}
 runs:
   using: composite
   steps:
@@ -37,9 +43,14 @@ runs:
       uses: asdf-vm/actions/setup@v4
       with:
         asdf_version: ${{ inputs.asdf-version }}
-    - name: Set up asdf cache
+    # Restore and save are separate steps (instead of actions/cache) so the
+    # compiled languages are saved right after installing them, even if a later
+    # step of the job fails. The prefix restore key is deliberate: when only one
+    # tool changes (e.g. a Node.js bump), the other compiled languages (PHP) are
+    # reused and asdf installs just the missing version.
+    - name: Restore asdf cache
       id: asdf-cache
-      uses: actions/cache@v6
+      uses: actions/cache/restore@v6
       with:
         path: ~/.asdf/
         key: ${{ runner.os }}-asdf-${{ hashFiles('**/.tool-versions') }}
@@ -60,16 +71,64 @@ runs:
     - name: Install PHP build-time dependencies
       if: steps.asdf-cache.outputs.cache-hit != 'true' && steps.check-php.outputs.php-required == 'true'
       shell: bash
-      run: >
-        wget -qO- "https://raw.githubusercontent.com/php-build/php-build/refs/heads/master/install-dependencies.sh" 
-        | /bin/sh
-        && sudo apt-get install libgd-dev
+      run: |
+        # Debian/Ubuntu package list vendored from php-build's install-dependencies.sh
+        # (the `debian|ubuntu)` branch) at php-build/php-build@2fecc9da7425e66307fca0341267a239c4502d25,
+        # plus our own libgd-dev. See "Updating the PHP build dependencies" in the README.
+        packages=(
+          autoconf
+          bash
+          bison
+          build-essential
+          ca-certificates
+          curl
+          findutils
+          git
+          libbz2-dev
+          libcurl4-gnutls-dev
+          libicu-dev
+          libjpeg-dev
+          libmcrypt-dev
+          libonig-dev
+          libpng-dev
+          libreadline-dev
+          libsqlite3-dev
+          libssl-dev
+          libtidy-dev
+          libxml2-dev
+          libxslt1-dev
+          libzip-dev
+          pkg-config
+          re2c
+          zlib1g-dev
+          # Not in php-build's list, see the README.
+          libgd-dev
+        )
+        # Bound network waits so an unreachable mirror fails the step within
+        # minutes instead of hanging. The retry and timeout values match what
+        # GitHub's Ubuntu images preset (stated here for runners without them);
+        # the hard ceilings are ~10x a healthy run (composite steps cannot set
+        # timeout-minutes).
+        apt_opts=(
+          -o Acquire::Retries=1
+          -o Acquire::http::Timeout=15
+          -o Acquire::https::Timeout=15
+        )
+        sudo DEBIAN_FRONTEND=noninteractive timeout 2m apt-get "${apt_opts[@]}" -q update
+        sudo DEBIAN_FRONTEND=noninteractive timeout 5m apt-get "${apt_opts[@]}" -q -y \
+          --no-install-recommends install "${packages[@]}"
     - name: Install languages if required
       if: steps.asdf-cache.outputs.cache-hit != 'true'
       uses: asdf-vm/actions/install@v4
       with:
         asdf_version: '${{ inputs.asdf-version }}'
         tool_versions_path: '${{ inputs.tool-versions-path }}'
+    - name: Save asdf cache
+      if: steps.asdf-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.asdf/
+        key: ${{ steps.asdf-cache.outputs.cache-primary-key }}
     - name: Setup go-task
       if: inputs.setup-task == 'true'
       uses: go-task/setup-task@v2
