@@ -7,35 +7,61 @@ workflow with `uses: gebruederheitz/actions/<action>@<ref>`.
 
 ### Which action sets up my tools?
 
-Use **`setup-tool-versions`** for repositories whose `.tool-versions` lists only
-`php`, `nodejs` and `pnpm`. It installs prebuilt binaries in about 15 seconds, needs
-no cache and doesn't depend on the Ubuntu apt mirrors.
+Use **`setup-tool-versions`**. It installs `php`, `nodejs` and `pnpm` from prebuilt
+binaries in about 15 seconds, without a cache and without the Ubuntu apt mirrors,
+and every other tool in `.tool-versions` with asdf, cached between runs.
 
-Use **`cached-asdf`** only if you need a tool `setup-tool-versions` doesn't support,
-or the exact PHP patch version from `.tool-versions` (see below). It compiles PHP on
-every cache miss, which takes about 12 minutes and happens after each PHP or
-Node.js bump, on the first run on `main` after a pull request (pull request caches
-aren't visible there), and whenever GitHub has evicted the cache (after 7 days
-without use). `cached-asdf` is meant to be retired once repositories have moved to
-`setup-tool-versions`.
+Use **`cached-asdf`** only if you need the exact PHP patch version from
+`.tool-versions` (see below). It compiles PHP on every cache miss, which takes
+5 to 12 minutes and happens after each PHP or Node.js bump, on the first run on
+`main` after a pull request (pull request caches aren't visible there), and whenever
+GitHub has evicted the cache (after 7 days without use). `cached-asdf` is meant to be
+retired once repositories have moved to `setup-tool-versions`.
 
 ### `setup-tool-versions`
 
-Reads `.tool-versions` and installs each tool from a prebuilt binary, without asdf
-and without compiling:
+Reads `.tool-versions` and installs each tool:
 
 | Tool in `.tool-versions` | Installed with                                                            |
 |--------------------------|---------------------------------------------------------------------------|
 | `php`                    | [`shivammathur/setup-php`](https://github.com/shivammathur/setup-php)    |
 | `nodejs`                 | [`actions/setup-node`](https://github.com/actions/setup-node)            |
 | `pnpm`                   | [`pnpm/action-setup`](https://github.com/pnpm/action-setup) (pnpm 11+)   |
+| anything else            | [asdf](https://asdf-vm.com/), cached (see below)                         |
 
-Any other tool, more than one version per tool, or a non-numeric version (`system`,
-`latest`, `ref:…`, `path:…`) fails the action with an error pointing at the line.
-It can optionally set up [go-task](https://taskfile.dev/), as `cached-asdf` does.
+`php`, `nodejs` and `pnpm` need exactly one numeric version (`8.4`, `8.4.16`);
+anything else for them (`system`, `latest`, `ref:…`, several versions) fails the
+action with an error pointing at the line, as does a tool listed twice. It can
+optionally set up [go-task](https://taskfile.dev/), as `cached-asdf` does.
 
 Unlike `cached-asdf`, this action **does not check out** the repository: run
-`actions/checkout` before it.
+`actions/checkout` before it. It never modifies `.tool-versions`.
+
+#### Tools installed with asdf
+
+Every other line of `.tool-versions` (e.g. `python`) is installed with asdf, exactly
+as listed, and is skipped entirely (no asdf setup) when there is none:
+
+- **Cache:** `~/.asdf/` is cached under a key made of the runner's OS, architecture
+  and **OS release** (e.g. `ubuntu-26.04`) plus a hash of those lines. A change to any
+  of them installs everything again; there is deliberately no prefix fallback, so a
+  cached shim can never shadow a tool installed from a prebuilt binary. The cache is
+  saved right after installing, so a later failing step doesn't discard it. The OS
+  release is part of the key because compiled tools link against the system
+  libraries: a PHP compiled on Ubuntu 24.04 doesn't start on 26.04.
+- **Versions:** the action sets `ASDF_<TOOL>_VERSION` for the rest of the job, so the
+  tools work in any directory, whatever `tool-versions-path` is.
+- **System packages:** plugins that compile (e.g. asdf-python) need the build
+  dependencies they document; install missing ones with `apt-get` before this
+  action. Prefer adding a prebuilt installer for a tool to this action over relying
+  on compiling it.
+
+#### Falling back to asdf (opt-in)
+
+By default a failing prebuilt install of `php`, `nodejs` or `pnpm` fails the action.
+With `asdf-fallback: "true"` the tool is installed with asdf instead, with a
+warning. For PHP that means compiling it (several minutes) after installing its
+build dependencies with apt, so the job then depends on the Ubuntu mirrors again.
 
 #### Inputs
 
@@ -45,6 +71,8 @@ Unlike `cached-asdf`, this action **does not check out** the repository: run
 | `php-extensions`     | `""`             | Passed to setup-php as `extensions`, e.g. `"intl, redis"`.                  |
 | `php-ini-values`     | `""`             | Passed to setup-php as `ini-values`, e.g. `"memory_limit=1G"`.              |
 | `php-coverage`       | `""`             | Passed to setup-php as `coverage`: `xdebug`, `pcov` or `none`.              |
+| `asdf-fallback`      | `"false"`        | `"true"`: install `php`/`nodejs`/`pnpm` with asdf when the prebuilt install fails. |
+| `asdf-version`       | `latest`         | The asdf version used for tools installed with asdf.                       |
 | `setup-task`         | `"false"`        | Set to `"true"` to install go-task.                                         |
 | `repo-token`         | `""`             | GitHub token passed to `go-task/setup-task` to avoid rate limiting.        |
 
@@ -55,6 +83,8 @@ Unlike `cached-asdf`, this action **does not check out** the repository: run
 | `php-version`  | The installed PHP version, e.g. `8.4.27`.                       |
 | `node-version` | The Node.js version from `.tool-versions`.                      |
 | `pnpm-version` | The pnpm version from `.tool-versions`.                         |
+| `asdf-tools`   | The `.tool-versions` lines installed with asdf, one per line.   |
+| `asdf-cache-hit` | `true` when those were restored from the cache for the exact key. |
 
 #### Usage
 
@@ -90,8 +120,8 @@ Unlike `cached-asdf`, this action **does not check out** the repository: run
 #### Migrating from `cached-asdf`
 
 Add `actions/checkout` before the action if the job relied on `cached-asdf`'s
-checkout, replace `cached-asdf` with `setup-tool-versions`, drop `asdf-version`, and
-make sure a `packageManager` field in `package.json` names the same pnpm version as
+checkout, replace `cached-asdf` with `setup-tool-versions` (inputs `setup-task`,
+`repo-token`, `tool-versions-path` and `asdf-version` carry over), and make sure a `packageManager` field in `package.json` names the same pnpm version as
 `.tool-versions` (or remove it).
 
 ### `cached-asdf`
