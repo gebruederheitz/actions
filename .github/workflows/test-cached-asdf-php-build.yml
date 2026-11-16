@@ -4,14 +4,15 @@ name: Test cached-asdf PHP build
 # compile every supported PHP minor version with asdf-php. Each build takes
 # about 12 minutes, so this only runs when the action changes, or on demand.
 #
-# It runs the action's "Install PHP build-time dependencies" step on its own
-# (extracted from action.yml) instead of the whole action: asdf installs only
+# It runs the action's dependency script (cached-asdf/php-build-deps.sh) on its
+# own instead of the whole action: asdf installs only
 # from the root .tool-versions, and the action's cache could skip the step.
 
 on:
   pull_request:
     paths: &paths
       - cached-asdf/action.yml
+      - cached-asdf/php-build-deps.sh
       - .github/workflows/test-cached-asdf-php-build.yml
   push:
     branches: [main]
@@ -44,18 +45,16 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install PHP build-time dependencies (step from cached-asdf/action.yml)
+      - name: Install PHP build-time dependencies (cached-asdf/php-build-deps.sh)
         env:
           WITH_LIBGD_DEV: ${{ matrix.libgd-dev }}
         run: |
-          yq '.runs.steps[] | select(.name == "Install PHP build-time dependencies") | .run' \
-            cached-asdf/action.yml > "$RUNNER_TEMP/deps.sh"
-          grep -q 'apt-get' "$RUNNER_TEMP/deps.sh"
+          cp cached-asdf/php-build-deps.sh "$RUNNER_TEMP/deps.sh"
           if [ "$WITH_LIBGD_DEV" != true ]; then
             sed -i '/^[[:space:]]*libgd-dev[[:space:]]*$/d' "$RUNNER_TEMP/deps.sh"
             if grep -q 'libgd-dev$' "$RUNNER_TEMP/deps.sh"; then exit 1; fi
           fi
-          bash -e -o pipefail "$RUNNER_TEMP/deps.sh"
+          bash "$RUNNER_TEMP/deps.sh"
 
       - name: Install asdf
         uses: asdf-vm/actions/setup@v4

@@ -35,7 +35,7 @@ evicted.
 
 When the cache is not an exact hit and `.tool-versions` requests PHP, the action
 installs the Debian/Ubuntu packages needed to compile PHP with `apt-get`. The
-package list is vendored in [`cached-asdf/action.yml`](cached-asdf/action.yml) instead
+package list is vendored in [`cached-asdf/php-build-deps.sh`](cached-asdf/php-build-deps.sh) instead
 of downloading and running php-build's script at run time. apt's network waits are
 bounded (1 retry and 15 s timeouts, as preset on GitHub's Ubuntu images, plus a
 hard limit of 2 minutes for `apt-get update` and 5 minutes for `apt-get install`),
@@ -73,11 +73,11 @@ The list is php-build's, plus `libgd-dev`:
    `curl -fsSL https://raw.githubusercontent.com/php-build/php-build/<sha>/install-dependencies.sh`.
    No output from `diff` means nothing to do.
 2. Copy the package names from the `apt-get install` command in the
-   `debian|ubuntu)` branch into the `packages` array of the
-   "Install PHP build-time dependencies" step. Keep upstream's order and keep
+   `debian|ubuntu)` branch into the `packages` array in
+   `cached-asdf/php-build-deps.sh`. Keep upstream's order and keep
    `libgd-dev` last, under its comment. Changes to the other branches (RHEL, Arch,
    macOS) don't concern us; GitHub's Linux runners are Ubuntu.
-3. Replace the recorded SHA (and date) with `$NEW` in the step's comment and in this
+3. Replace the recorded SHA (and date) with `$NEW` in the script's comment and in this
    section, in the same commit as the package changes.
 4. Open a pull request: the "Test cached-asdf PHP build" workflow
    ([`.github/workflows/test-cached-asdf-php-build.yml`](.github/workflows/test-cached-asdf-php-build.yml))
