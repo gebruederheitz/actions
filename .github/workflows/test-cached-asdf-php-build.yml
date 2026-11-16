@@ -1,0 +1,81 @@
+name: Test cached-asdf PHP build
+
+# Checks that cached-asdf's vendored PHP build dependencies are enough to
+# compile every supported PHP minor version with asdf-php. Each build takes
+# about 12 minutes, so this only runs when the action changes, or on demand.
+#
+# It runs the action's "Install PHP build-time dependencies" step on its own
+# (extracted from action.yml) instead of the whole action: asdf installs only
+# from the root .tool-versions, and the action's cache could skip the step.
+
+on:
+  pull_request:
+    paths: &paths
+      - cached-asdf/action.yml
+      - .github/workflows/test-cached-asdf-php-build.yml
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: PHP ${{ matrix.php }}${{ !matrix.libgd-dev && ' without libgd-dev' || '' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { php: "8.2", libgd-dev: true }
+          - { php: "8.3", libgd-dev: true }
+          - { php: "8.4", libgd-dev: true }
+          - { php: "8.5", libgd-dev: true }
+          # Is libgd-dev still needed now that asdf-php builds the bundled GD?
+          - { php: "8.2", libgd-dev: false }
+          - { php: "8.5", libgd-dev: false }
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install PHP build-time dependencies (step from cached-asdf/action.yml)
+        env:
+          WITH_LIBGD_DEV: ${{ matrix.libgd-dev }}
+        run: |
+          yq '.runs.steps[] | select(.name == "Install PHP build-time dependencies") | .run' \
+            cached-asdf/action.yml > "$RUNNER_TEMP/deps.sh"
+          grep -q 'apt-get' "$RUNNER_TEMP/deps.sh"
+          if [ "$WITH_LIBGD_DEV" != true ]; then
+            sed -i '/^[[:space:]]*libgd-dev[[:space:]]*$/d' "$RUNNER_TEMP/deps.sh"
+            if grep -q 'libgd-dev$' "$RUNNER_TEMP/deps.sh"; then exit 1; fi
+          fi
+          bash -e -o pipefail "$RUNNER_TEMP/deps.sh"
+
+      - name: Install asdf
+        uses: asdf-vm/actions/setup@v4
+
+      - name: Build PHP ${{ matrix.php }} with asdf
+        id: build
+        env:
+          PHP_MINOR: ${{ matrix.php }}
+        run: |
+          asdf plugin add php
+          version=$(asdf latest php "$PHP_MINOR")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          asdf install php "$version"
+
+      - name: Check the built PHP
+        env:
+          VERSION: ${{ steps.build.outputs.version }}
+        run: |
+          php="$(asdf where php "$VERSION")/bin/php"
+          "$php" -v
+          "$php" -m
+          "$php" -r 'exit(function_exists("imagecreatetruecolor") ? 0 : 1);'
+          "$php" -r 'var_export(gd_info()); echo PHP_EOL;'

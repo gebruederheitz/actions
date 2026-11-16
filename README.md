@@ -79,6 +79,10 @@ The list is php-build's, plus `libgd-dev`:
    macOS) don't concern us; GitHub's Linux runners are Ubuntu.
 3. Replace the recorded SHA (and date) with `$NEW` in the step's comment and in this
    section, in the same commit as the package changes.
+4. Open a pull request: the "Test cached-asdf PHP build" workflow
+   ([`.github/workflows/test-cached-asdf-php-build.yml`](.github/workflows/test-cached-asdf-php-build.yml))
+   compiles every supported PHP minor version with the new list on `ubuntu-latest`.
+   When PHP releases a new minor version or drops one, update its matrix too.
 
 #### Inputs
 
