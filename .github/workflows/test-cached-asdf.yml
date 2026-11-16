@@ -14,7 +14,7 @@ on:
 
 permissions:
   contents: read
-  actions: write # delete this ref's cache entry so the cold job really runs cold
+  actions: write # delete earlier cache entries so the cold jobs really run cold
 
 jobs:
   # asdf-vm/actions/install always installs from the root .tool-versions
@@ -28,26 +28,30 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
+      # Every OS release and every ref: a pull request run also restores main's
+      # entries.
       - &delete-cache
-        name: Delete this ref's exact cache entry from earlier runs
+        name: Delete the cache entries for this .tool-versions from earlier runs
         env:
           GH_TOKEN: ${{ github.token }}
-          # Must match the key cached-asdf computes.
-          CACHE_KEY: ${{ runner.os }}-asdf-${{ hashFiles('**/.tool-versions') }}
-        run: >
-          gh api -X DELETE
-          "repos/$GITHUB_REPOSITORY/actions/caches?key=$CACHE_KEY&ref=$GITHUB_REF"
-          || echo "No cache entry to delete."
+          HASH: ${{ hashFiles('**/.tool-versions') }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100" \
+            --jq ".actions_caches[] | select(.key | endswith(\"-asdf-$HASH\")) | .id" |
+            while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id"; done
 
       - name: Run cached-asdf
         id: asdf
         uses: ./cached-asdf
 
-      - name: Assert a cold run
+      - name: Assert a cold run under a key with the OS release
         env:
           CACHE_HIT: ${{ steps.asdf.outputs.cache-hit }}
+          CACHE_KEY: ${{ steps.asdf.outputs.cache-key }}
         run: |
           test "$CACHE_HIT" != "true"
+          release=$(. /etc/os-release && echo "$ID-$VERSION_ID")
+          case "$CACHE_KEY" in "Linux-X64-$release-asdf-"*) ;; *) echo "Unexpected key $CACHE_KEY"; exit 1 ;; esac
           test "$(node --version)" = "v$(awk '$1 == "nodejs" { print $2 }' .tool-versions)"
 
       - &assert-saved
@@ -55,7 +59,7 @@ jobs:
         uses: actions/cache/restore@v6
         with:
           path: ~/.asdf/
-          key: ${{ runner.os }}-asdf-${{ hashFiles('**/.tool-versions') }}
+          key: ${{ steps.asdf.outputs.cache-key }}
           lookup-only: true
           fail-on-cache-miss: true
 
