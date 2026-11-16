@@ -14,7 +14,7 @@ on:
 
 permissions:
   contents: read
-  actions: write # delete this ref's cache entry so the cold job really runs cold
+  actions: write # delete the cache entry so the cold job really runs cold
 
 jobs:
   # asdf-vm/actions/install always installs from the root .tool-versions
@@ -29,14 +29,15 @@ jobs:
       - uses: actions/checkout@v7
 
       - &delete-cache
-        name: Delete this ref's exact cache entry from earlier runs
+        # On every ref: a pull request run also restores main's entries.
+        name: Delete the exact cache entry from earlier runs
         env:
           GH_TOKEN: ${{ github.token }}
           # Must match the key cached-asdf computes.
           CACHE_KEY: ${{ runner.os }}-asdf-${{ hashFiles('**/.tool-versions') }}
         run: >
           gh api -X DELETE
-          "repos/$GITHUB_REPOSITORY/actions/caches?key=$CACHE_KEY&ref=$GITHUB_REF"
+          "repos/$GITHUB_REPOSITORY/actions/caches?key=$CACHE_KEY"
           || echo "No cache entry to delete."
 
       - name: Run cached-asdf
