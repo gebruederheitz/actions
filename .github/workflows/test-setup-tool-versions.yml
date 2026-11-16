@@ -6,6 +6,7 @@ on:
       - setup-tool-versions/**
       - .github/fixtures/setup-tool-versions/**
       - .github/workflows/test-setup-tool-versions.yml
+      - cached-asdf/php-build-deps.sh
   push:
     branches: [main]
     paths: *paths
@@ -39,7 +40,10 @@ jobs:
       - name: Assert the installed versions
         env:
           PHP_VERSION: ${{ steps.tools.outputs.php-version }}
+          ASDF_TOOLS: ${{ steps.tools.outputs.asdf-tools }}
         run: |
+          test -z "$ASDF_TOOLS"
+          if command -v asdf; then exit 1; fi
           requested() { awk -v tool="$1" '$1 == tool { print $2 }' "$FIXTURE"; }
           php_minor=$(requested php | cut -d. -f1,2)
           echo "PHP: requested $(requested php), installed $PHP_VERSION"
@@ -147,7 +151,99 @@ jobs:
           EXPECTED: ${{ matrix.expected }}
         run: test "$OUTCOME" = "$EXPECTED"
 
-  unsupported-tool:
+  # Tools without prebuilt binary support go to asdf, cached between runs.
+  asdf-cold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write # delete this ref's asdf cache entries so the run is cold
+    env: &asdf-env
+      FIXTURE: .github/fixtures/setup-tool-versions/asdf/.tool-versions
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Delete this ref's asdf cache entries from earlier runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/caches?ref=$GITHUB_REF&per_page=100" \
+            --jq '.actions_caches[] | select(.key | contains("-setup-tool-versions-asdf-")) | .id' |
+            while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id"; done
+
+      - name: Run setup-tool-versions
+        id: tools
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+
+      - &assert-asdf
+        name: Assert prebuilt and asdf tools
+        env:
+          ASDF_TOOLS: ${{ steps.tools.outputs.asdf-tools }}
+          CACHE_HIT: ${{ steps.tools.outputs.asdf-cache-hit }}
+          EXPECTED_CACHE_HIT: ${{ github.job == 'asdf-warm' }}
+        run: |
+          requested() { awk -v tool="$1" '$1 == tool { print $2 }' "$FIXTURE"; }
+          printf 'asdf tools:\n%s\n' "$ASDF_TOOLS"
+          test "$(printf '%s\n' "$ASDF_TOOLS" | cut -d' ' -f1 | tr '\n' ' ')" = "shellcheck python "
+          if [ "$EXPECTED_CACHE_HIT" = true ]; then test "$CACHE_HIT" = true; else test "$CACHE_HIT" != true; fi
+          # Prebuilt tools are not shadowed by asdf shims.
+          for tool in php node pnpm; do
+            case "$(command -v "$tool")" in "$HOME/.asdf/"*) exit 1 ;; esac
+          done
+          test "$(node --version)" = "v$(requested nodejs)"
+          # asdf tools work outside the directory of the .tool-versions file.
+          cd "$RUNNER_TEMP"
+          shellcheck --version | grep -q "version: $(requested shellcheck)"
+          test "$(python --version)" = "Python $(requested python)"
+
+  asdf-warm:
+    needs: asdf-cold
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env: *asdf-env
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run setup-tool-versions
+        id: tools
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+
+      - *assert-asdf
+
+  # Opt-in: a failing prebuilt install is retried with asdf. pnpm/action-setup
+  # is made to fail with a conflicting packageManager field.
+  asdf-fallback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Declare a different pnpm version in package.json
+        run: |
+          jq '.packageManager = "pnpm@11.0.0"' package.json > package.json.new
+          mv package.json.new package.json
+
+      - name: Run setup-tool-versions
+        id: tools
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+          asdf-fallback: "true"
+
+      - name: Assert pnpm came from asdf
+        env:
+          ASDF_TOOLS: ${{ steps.tools.outputs.asdf-tools }}
+        run: |
+          test "$ASDF_TOOLS" = "pnpm $(awk '$1 == "pnpm" { print $2 }' "$FIXTURE")"
+          cd "$RUNNER_TEMP"
+          case "$(command -v pnpm)" in "$HOME/.asdf/"*) ;; *) exit 1 ;; esac
+          test "$(pnpm --version)" = "$(awk '$1 == "pnpm" { print $2 }' "$GITHUB_WORKSPACE/$FIXTURE")"
+
+  invalid-version:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -158,7 +254,7 @@ jobs:
         continue-on-error: true
         uses: ./setup-tool-versions
         with:
-          tool-versions-path: .github/fixtures/setup-tool-versions/unsupported/.tool-versions
+          tool-versions-path: .github/fixtures/setup-tool-versions/invalid/.tool-versions
 
       - name: Assert the action failed
         env:
