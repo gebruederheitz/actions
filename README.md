@@ -51,10 +51,12 @@ as listed, and is skipped entirely (no asdf setup) when there is none:
   libraries: a PHP compiled on Ubuntu 24.04 doesn't start on 26.04.
 - **Versions:** the action sets `ASDF_<TOOL>_VERSION` for the rest of the job, so the
   tools work in any directory, whatever `tool-versions-path` is.
-- **System packages:** plugins that compile (e.g. asdf-python) need the build
-  dependencies they document; install missing ones with `apt-get` before this
-  action. Prefer adding a prebuilt installer for a tool to this action over relying
-  on compiling it.
+- **System packages:** plugins that compile need the build dependencies they
+  document; install missing ones with `apt-get` before this action. For example,
+  asdf-python compiles Python 3.13 on `ubuntu-latest` in about 1.5 minutes, but
+  without the `bz2` and `readline` modules unless `libbz2-dev` and
+  `libreadline-dev` are installed first. Prefer adding a prebuilt installer for a
+  tool to this action over relying on compiling it.
 
 #### Falling back to asdf (opt-in)
 
