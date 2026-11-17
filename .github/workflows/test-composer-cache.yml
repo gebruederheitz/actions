@@ -1,0 +1,119 @@
+name: Test composer-cache
+
+on:
+  pull_request:
+    paths: &paths
+      - composer-cache/**
+      - .github/fixtures/composer-cache/**
+      - .github/workflows/test-composer-cache.yml
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write # delete earlier cache entries so the cold job really runs cold
+
+env:
+  FIXTURE: .github/fixtures/composer-cache
+
+jobs:
+  # Saves with composer-cache/save, then checks the entry exists while the job
+  # is still running: that is what the split buys over composer-cache, which
+  # saves only after a successful job.
+  cold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      # Every ref: a pull request run also restores main's entries.
+      - name: Delete the Composer cache entries from earlier runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100" \
+            --jq '.actions_caches[] | select(.key | startswith("composer-")) | .id' |
+            while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id"; done
+
+      - name: Restore Composer packages
+        id: restore
+        uses: ./composer-cache/restore
+        with:
+          vendor_path: ${{ env.FIXTURE }}/vendor
+
+      - name: Assert a cold run
+        env:
+          CACHE_HIT: ${{ steps.restore.outputs.cache-hit }}
+        run: |
+          test -z "$CACHE_HIT"
+          test ! -e "$FIXTURE/vendor"
+
+      - run: composer install --working-dir="$FIXTURE" --no-interaction --no-progress
+
+      - uses: ./composer-cache/save
+
+      - name: Assert the cache was saved before the job ends
+        uses: actions/cache/restore@v6
+        with:
+          path: |
+            ${{ env.FIXTURE }}/vendor
+            ~/.cache/composer/files
+          key: ${{ steps.restore.outputs.cache-key }}
+          lookup-only: true
+          fail-on-cache-miss: true
+
+  # Both actions restore the entry the split saved.
+  warm:
+    needs: cold
+    strategy:
+      fail-fast: false
+      matrix:
+        action: [restore, combined]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Restore with composer-cache/restore
+        if: matrix.action == 'restore'
+        id: restore
+        uses: ./composer-cache/restore
+        with:
+          vendor_path: ${{ env.FIXTURE }}/vendor
+
+      - name: Restore with composer-cache
+        if: matrix.action == 'combined'
+        id: combined
+        uses: ./composer-cache
+        with:
+          vendor_path: ${{ env.FIXTURE }}/vendor
+
+      - name: Assert an exact cache hit
+        env:
+          CACHE_HIT: ${{ steps.restore.outputs.cache-hit || steps.combined.outputs.cache-hit }}
+        run: |
+          test "$CACHE_HIT" = "true"
+          test -f "$FIXTURE/vendor/psr/log/composer.json"
+
+      # Skips saving after an exact hit.
+      - name: Save after an exact hit
+        if: matrix.action == 'restore'
+        uses: ./composer-cache/save
+
+  save-without-restore:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run composer-cache/save alone
+        id: save
+        continue-on-error: true
+        uses: ./composer-cache/save
+
+      - name: Assert it failed
+        env:
+          OUTCOME: ${{ steps.save.outcome }}
+        run: test "$OUTCOME" = "failure"

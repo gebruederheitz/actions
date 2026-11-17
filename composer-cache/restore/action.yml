@@ -1,0 +1,50 @@
+name: composer-cache/restore
+description: >
+  Restores Composer packages (the vendor directory and Composer's download
+  cache). Run composer install next and composer-cache/save right after it, so
+  the packages are stored even when a later step fails the job.
+inputs:
+  vendor_path:
+    description: >
+      Path to the vendor directory, where Composer installs packages.
+    required: false
+    default: "vendor"
+outputs:
+  cache-hit:
+    description: >
+      "true" when the entry for the current composer.lock was restored, "false"
+      when an older entry was restored instead, empty when nothing was restored.
+    value: ${{ steps.restore.outputs.cache-hit }}
+  cache-key:
+    description: The key composer-cache/save stores the packages under.
+    value: ${{ steps.restore.outputs.cache-primary-key }}
+runs:
+  using: composite
+  steps:
+    - name: Restore Composer packages
+      id: restore
+      uses: actions/cache/restore@v6
+      with:
+        path: |
+          ${{ inputs.vendor_path }}
+          ~/.cache/composer/files
+        key: composer-${{ runner.os }}-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          composer-${{ runner.os }}-
+
+    # Composite actions can't read each other's outputs, so the job environment
+    # carries the entry to composer-cache/save. The key is taken from here, not
+    # recomputed: after composer install, '**/composer.lock' also matches files
+    # inside vendor.
+    - name: Hand the cache entry to composer-cache/save
+      shell: bash
+      env:
+        KEY: ${{ steps.restore.outputs.cache-primary-key }}
+        HIT: ${{ steps.restore.outputs.cache-hit }}
+        VENDOR_PATH: ${{ inputs.vendor_path }}
+      run: |
+        {
+          echo "COMPOSER_CACHE_ACTION_KEY=$KEY"
+          echo "COMPOSER_CACHE_ACTION_HIT=$HIT"
+          echo "COMPOSER_CACHE_ACTION_VENDOR_PATH=$VENDOR_PATH"
+        } >> "$GITHUB_ENV"
