@@ -1,0 +1,6 @@
+{
+    "name": "fixture/composer-cache",
+    "require": {
+        "psr/log": "^3.0"
+    }
+}

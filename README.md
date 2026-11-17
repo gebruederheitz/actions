@@ -237,28 +237,58 @@ The list is exactly php-build's, with nothing added or removed:
 
 ### `composer-cache`
 
-Caches Composer packages (the vendor directory and Composer's local cache)
-between workflow runs.
+Caches Composer packages (the vendor directory and Composer's download cache,
+`~/.cache/composer/files`) between workflow runs, keyed by `composer.lock`. When
+`composer.lock` changed, the entry of an earlier `composer.lock` is restored and
+`composer install` only fetches the difference. Pull requests also restore their
+base branch's entries.
+
+Comes in two forms that share one cache entry:
+
+- **`composer-cache/restore` and `composer-cache/save`** restore before
+  `composer install` and save right after it. Use them in jobs that run checks
+  after the install: the packages are stored even when a check fails the job.
+- **`composer-cache`** restores and saves in one step, like `actions/cache`. It
+  saves at the end of the job, and only when the job succeeds.
+
+Run `composer install` after a restore even on an exact hit. With a warm vendor
+directory it only regenerates the autoloader, which also maps your own classes
+when the classmap is optimized; a cached autoloader can point at files that no
+longer exist.
 
 #### Inputs
+
+`composer-cache` and `composer-cache/restore`:
 
 | Name          | Default  | Description                                          |
 | ------------- | -------- | ---------------------------------------------------- |
 | `vendor_path` | `vendor` | Path to the vendor directory Composer installs into. |
 
+`composer-cache/save` takes no inputs; it saves the entry `composer-cache/restore`
+restored earlier in the same job, and fails when there is none.
+
 #### Outputs
 
-| Name        | Description                                                     |
-| ----------- | -------------------------------------------------------------- |
-| `cache-hit` | `true` when the vendor directory was restored from cache.      |
+| Name        | Description                                                                                                                         |
+| ----------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `cache-hit` | `true` when the entry for the current `composer.lock` was restored, `false` when an older one was, empty when nothing was restored. |
+| `cache-key` | `composer-cache/restore` only: the key `composer-cache/save` stores the packages under.                                             |
 
 #### Usage
 
 ```yaml
-- uses: gebruederheitz/actions/composer-cache@v1
-  id: composer-cache
+- uses: gebruederheitz/actions/composer-cache/restore@v1
 - run: composer install
-  if: steps.composer-cache.outputs.cache-hit != 'true'
+- uses: gebruederheitz/actions/composer-cache/save@v1
+- run: composer test # a failure here no longer discards the installed packages
+```
+
+`composer-cache/save` skips saving after an exact hit, so every job can use the
+same three steps. The one-step form:
+
+```yaml
+- uses: gebruederheitz/actions/composer-cache@v1
+- run: composer install
 ```
 
 ## Releasing

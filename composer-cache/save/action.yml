@@ -1,0 +1,25 @@
+name: composer-cache/save
+description: >
+  Saves the Composer packages that composer-cache/restore restored earlier in
+  the job, unless it restored the entry for the current composer.lock. Run it
+  right after composer install.
+runs:
+  using: composite
+  steps:
+    - name: Check that composer-cache/restore ran
+      if: env.COMPOSER_CACHE_ACTION_KEY == ''
+      shell: bash
+      run: |
+        echo "::error::composer-cache/save needs composer-cache/restore earlier in the same job."
+        exit 1
+
+    # The paths must match composer-cache/restore's exactly: they are part of
+    # the entry's version, and an entry saved under other paths never restores.
+    - name: Save Composer packages
+      if: env.COMPOSER_CACHE_ACTION_HIT != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: |
+          ${{ env.COMPOSER_CACHE_ACTION_VENDOR_PATH }}
+          ~/.cache/composer/files
+        key: ${{ env.COMPOSER_CACHE_ACTION_KEY }}
