@@ -17,13 +17,18 @@ in the repository root.
 
 #### Caching
 
-The installed languages (`~/.asdf/`) are cached under a key derived from all
-`.tool-versions` files in the repository. The cache is saved **right after the
+The installed languages (`~/.asdf/`) are cached under a key made of the runner's OS,
+architecture and **OS release** (e.g. `Linux-X64-ubuntu-26.04-asdf-`) plus a hash of
+all `.tool-versions` files in the repository. The OS release is part of the key
+because compiled languages link against the system libraries: when `ubuntu-latest`
+moved from 24.04 to 26.04, a cached PHP compiled on 24.04 failed to start with
+`libxml2.so.2: cannot open shared object file`. Now the first run on a new release
+compiles again. The cache is saved **right after the
 languages are installed**, not at the end of the job, so a failing lint or test step
 later in the job no longer throws away a fresh PHP compile. Nothing is saved when
 the cache was restored for the exact key, or when installing failed.
 
-When no exact entry exists, the most recent `<os>-asdf-` entry is restored instead
+When no exact entry exists, the most recent entry for the same OS release is restored instead
 and asdf installs only what is missing. This is deliberate: after a Node.js bump the
 previously compiled PHP is reused.
 
@@ -97,6 +102,7 @@ The list is php-build's, plus `libgd-dev`:
 | Name        | Description                                                                          |
 |-------------|--------------------------------------------------------------------------------------|
 | `cache-hit` | `true` when the asdf cache was restored for the exact key and nothing was installed. |
+| `cache-key` | The asdf cache key, e.g. `Linux-X64-ubuntu-26.04-asdf-<hash>`.                       |
 
 > **Note:** GitHub Actions inputs are always strings, so boolean-like inputs are
 > passed and compared as `"true"` / `"false"`.
