@@ -1,6 +1,9 @@
 name: composer-cache
 description: >
-  Caches composer packages.
+  Caches Composer packages (the vendor directory and Composer's download cache)
+  between workflow runs. Saves at the end of the job, and only when the job
+  succeeds; use composer-cache/restore and composer-cache/save to save right
+  after composer install instead.
 inputs:
   vendor_path:
     description: >
@@ -11,24 +14,21 @@ outputs:
   cache-hit:
     description: >
       Whether an exact match was found for the Composer packages cache
-      (true when the vendor directory was restored from cache).
+      (true when the vendor directory was restored for the current composer.lock).
     value: ${{ steps.composer-cache.outputs.cache-hit }}
 runs:
   using: composite
   steps:
+    # Same paths and key as composer-cache/restore and composer-cache/save, so
+    # all three share one cache entry. No ref in the key: GitHub already scopes
+    # caches by ref, and a pull request can then fall back to its base branch's.
     - name: Cache Composer packages
       id: composer-cache
       uses: actions/cache@v6
       with:
-        path: ${{ inputs.vendor_path }}
-        key: composer-cache-${{ github.ref_name }}-v1-${{ hashFiles('**/composer.lock') }}
+        path: |
+          ${{ inputs.vendor_path }}
+          ~/.cache/composer/files
+        key: composer-${{ runner.os }}-${{ hashFiles('**/composer.lock') }}
         restore-keys: |
-          composer-cache-${{ github.ref_name }}-v1-
-
-    - name: Cache Composer local
-      uses: actions/cache@v6
-      with:
-        path: ~/.cache/composer
-        key: composer-local-cache-${{ github.ref_name }}-v1
-        restore-keys: |
-          composer-local-cache-${{ github.ref_name }}-
+          composer-${{ runner.os }}-
