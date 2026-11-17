@@ -1,0 +1,204 @@
+name: setup-tool-versions
+description: >
+  Install the tools listed in an asdf .tool-versions file: PHP, Node.js and pnpm
+  from prebuilt binaries (shivammathur/setup-php, actions/setup-node,
+  pnpm/action-setup), every other tool with asdf, cached between runs.
+  Optionally sets up go-task.
+inputs:
+  tool-versions-path:
+    description: >
+      Path to the .tool-versions file.
+    required: false
+    default: .tool-versions
+  php-extensions:
+    description: >
+      Passed to shivammathur/setup-php as "extensions", e.g. "intl, redis".
+    required: false
+    default: ''
+  php-ini-values:
+    description: >
+      Passed to shivammathur/setup-php as "ini-values", e.g. "memory_limit=1G".
+    required: false
+    default: ''
+  php-coverage:
+    description: >
+      Passed to shivammathur/setup-php as "coverage" ("xdebug", "pcov" or "none").
+    required: false
+    default: ''
+  asdf-fallback:
+    description: >
+      Set to "true" to install php, nodejs or pnpm with asdf when installing the
+      prebuilt binary fails, instead of failing the action. For PHP this means
+      compiling it (several minutes) and installing its build dependencies with apt.
+    required: false
+    default: "false"
+  asdf-version:
+    description: >
+      The version of asdf used for tools without prebuilt binary support.
+    required: false
+    default: latest
+  setup-task:
+    description: >
+      Whether to set up go-task. Set this to "true" if your workflow requires go-task.
+    required: false
+    default: "false"
+  repo-token:
+    description: >
+      (optional) When using "setup-task", pass this GitHub token to `go-task/setup-task`
+      to avoid rate limiting; see https://github.com/go-task/setup-task#repo-token
+    required: false
+    default: ''
+outputs:
+  php-version:
+    description: The installed PHP version (e.g. "8.4.27"), empty when PHP is not listed.
+    value: ${{ steps.php-version.outputs.installed }}
+  node-version:
+    description: The Node.js version from .tool-versions, empty when it is not listed.
+    value: ${{ steps.tools.outputs.nodejs }}
+  pnpm-version:
+    description: The pnpm version from .tool-versions, empty when it is not listed.
+    value: ${{ steps.tools.outputs.pnpm }}
+  asdf-tools:
+    description: >
+      The .tool-versions lines installed with asdf, one per line (empty when none).
+    value: ${{ steps.asdf-tools.outputs.tools }}
+  asdf-cache-hit:
+    description: >
+      "true" when the asdf tools were restored from the cache for the exact key.
+    value: ${{ steps.asdf-cache.outputs.cache-hit }}
+runs:
+  using: composite
+  steps:
+    - name: Read .tool-versions
+      id: tools
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/read-tool-versions.sh" "$TOOL_VERSIONS"'
+      env:
+        TOOL_VERSIONS: ${{ inputs.tool-versions-path }}
+
+    # Prebuilt binaries. With asdf-fallback, a failure here hands the tool to asdf.
+    - name: Set up PHP
+      if: steps.tools.outputs.php != ''
+      id: setup-php
+      continue-on-error: ${{ inputs.asdf-fallback == 'true' }}
+      uses: shivammathur/setup-php@v2
+      with:
+        php-version-file: ${{ inputs.tool-versions-path }}
+        extensions: ${{ inputs.php-extensions }}
+        ini-values: ${{ inputs.php-ini-values }}
+        coverage: ${{ inputs.php-coverage }}
+
+    - name: Set up Node.js
+      if: steps.tools.outputs.nodejs != ''
+      id: setup-node
+      continue-on-error: ${{ inputs.asdf-fallback == 'true' }}
+      uses: actions/setup-node@v7
+      with:
+        node-version-file: ${{ inputs.tool-versions-path }}
+
+    - name: Set up pnpm
+      if: steps.tools.outputs.pnpm != ''
+      id: setup-pnpm
+      continue-on-error: ${{ inputs.asdf-fallback == 'true' }}
+      uses: pnpm/action-setup@v6
+      with:
+        version: ${{ steps.tools.outputs.pnpm }}
+
+    # asdf: tools without prebuilt binary support, plus failed prebuilt installs.
+    - name: Collect tools for asdf
+      id: asdf-tools
+      shell: bash
+      env:
+        TOOLS: ${{ steps.tools.outputs.asdf-tools }}
+        PHP: ${{ steps.tools.outputs.php }}
+        PHP_OUTCOME: ${{ steps.setup-php.outcome }}
+        NODEJS: ${{ steps.tools.outputs.nodejs }}
+        NODEJS_OUTCOME: ${{ steps.setup-node.outcome }}
+        PNPM: ${{ steps.tools.outputs.pnpm }}
+        PNPM_OUTCOME: ${{ steps.setup-pnpm.outcome }}
+      run: |
+        fallback() {
+          if [ "$2" = failure ]; then
+            echo "::warning::Installing the prebuilt $1 $3 failed; installing it with asdf instead (asdf-fallback)."
+            TOOLS=$(printf '%s\n%s %s' "$TOOLS" "$1" "$3")
+          fi
+        }
+        fallback php "$PHP_OUTCOME" "$PHP"
+        fallback nodejs "$NODEJS_OUTCOME" "$NODEJS"
+        fallback pnpm "$PNPM_OUTCOME" "$PNPM"
+        TOOLS=$(printf '%s\n' "$TOOLS" | sed '/^[[:space:]]*$/d')
+        {
+          echo "tools<<ASDF_TOOLS_EOF"
+          if [ -n "$TOOLS" ]; then printf '%s\n' "$TOOLS"; fi
+          echo "ASDF_TOOLS_EOF"
+          if printf '%s\n' "$TOOLS" | grep -q '^php '; then echo "php=true"; fi
+          # Compiled tools link against the runner's system libraries, so the
+          # cache must not cross OS releases (e.g. ubuntu-latest moving on).
+          echo "os=$(. /etc/os-release && echo "$ID-$VERSION_ID")"
+          echo "hash=$(printf '%s\n' "$TOOLS" | sha256sum | cut -c1-64)"
+        } >> "$GITHUB_OUTPUT"
+
+    - name: Install asdf
+      if: steps.asdf-tools.outputs.tools != ''
+      uses: asdf-vm/actions/setup@v4
+      with:
+        asdf_version: ${{ inputs.asdf-version }}
+
+    # Exact key only: a prefix match could restore shims of tools installed
+    # prebuilt in this run (e.g. from an earlier fallback) and shadow them.
+    - name: Restore asdf cache
+      if: steps.asdf-tools.outputs.tools != ''
+      id: asdf-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/.asdf/
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.asdf-tools.outputs.os }}-setup-tool-versions-asdf-${{ steps.asdf-tools.outputs.hash }}
+
+    - name: Install PHP build-time dependencies
+      if: steps.asdf-tools.outputs.php == 'true' && steps.asdf-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/../cached-asdf/php-build-deps.sh"'
+
+    - name: Install tools with asdf
+      if: steps.asdf-tools.outputs.tools != '' && steps.asdf-cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/asdf-tools.sh" install'
+      env:
+        ASDF_TOOLS: ${{ steps.asdf-tools.outputs.tools }}
+
+    # Right after installing, so a later failing step doesn't discard the work.
+    - name: Save asdf cache
+      if: steps.asdf-tools.outputs.tools != '' && steps.asdf-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/.asdf/
+        key: ${{ steps.asdf-cache.outputs.cache-primary-key }}
+
+    - name: Activate asdf tools
+      if: steps.asdf-tools.outputs.tools != ''
+      shell: bash
+      run: '"$GITHUB_ACTION_PATH/asdf-tools.sh" export'
+      env:
+        ASDF_TOOLS: ${{ steps.asdf-tools.outputs.tools }}
+
+    # setup-php only resolves major.minor and installs the newest patch release
+    # it has a build for, so a full version in .tool-versions is not guaranteed.
+    - name: Check the installed PHP version
+      if: steps.tools.outputs.php != ''
+      id: php-version
+      shell: bash
+      run: |
+        installed=$(php -r 'echo PHP_VERSION;')
+        echo "installed=$installed" >> "$GITHUB_OUTPUT"
+        case "$installed" in
+          "$REQUESTED" | "$REQUESTED".*) ;;
+          *) echo "::warning::.tool-versions requests PHP $REQUESTED, setup-php installed PHP $installed. setup-php installs the latest available patch release of a minor version." ;;
+        esac
+      env:
+        REQUESTED: ${{ steps.tools.outputs.php }}
+
+    - name: Set up go-task
+      if: inputs.setup-task == 'true'
+      uses: go-task/setup-task@v2
+      with:
+        repo-token: ${{ inputs.repo-token }}

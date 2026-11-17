@@ -1,0 +1,263 @@
+name: Test setup-tool-versions
+
+on:
+  pull_request:
+    paths: &paths
+      - setup-tool-versions/**
+      - .github/fixtures/setup-tool-versions/**
+      - .github/workflows/test-setup-tool-versions.yml
+      - cached-asdf/php-build-deps.sh
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  FIXTURE: .github/fixtures/setup-tool-versions/.tool-versions
+
+jobs:
+  install:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run setup-tool-versions
+        id: tools
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+          setup-task: "true"
+          repo-token: ${{ github.token }}
+
+      - name: Assert the installed versions
+        env:
+          PHP_VERSION: ${{ steps.tools.outputs.php-version }}
+          ASDF_TOOLS: ${{ steps.tools.outputs.asdf-tools }}
+        run: |
+          test -z "$ASDF_TOOLS"
+          if command -v asdf; then exit 1; fi
+          requested() { awk -v tool="$1" '$1 == tool { print $2 }' "$FIXTURE"; }
+          php_minor=$(requested php | cut -d. -f1,2)
+          echo "PHP: requested $(requested php), installed $PHP_VERSION"
+          test "$(php -r 'echo PHP_MAJOR_VERSION . "." . PHP_MINOR_VERSION;')" = "$php_minor"
+          test "$PHP_VERSION" = "$(php -r 'echo PHP_VERSION;')"
+          test "$(node --version)" = "v$(requested nodejs)"
+          test "$(pnpm --version)" = "$(requested pnpm)"
+          task --version
+          composer --version
+
+      - name: Show where PHP came from
+        run: |
+          ls -l "$(command -v php)" "$(readlink -f "$(command -v php)")"
+          dpkg -S "$(readlink -f "$(command -v php)")" || echo "PHP binary is not owned by a dpkg package."
+          grep -rl ondrej /etc/apt/sources.list.d/ || echo "No ondrej PPA configured."
+
+  # Simulates an Ubuntu mirror / PPA outage: every host apt is configured to
+  # use, plus the Launchpad PPA hosts, resolves to 127.0.0.1.
+  apt-unreachable:
+    strategy:
+      fail-fast: false
+      matrix:
+        extensions: ["", "bcmath, gd, intl, pdo_sqlite, zip", "redis"]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Make apt mirrors and PPAs unreachable
+        run: |
+          hosts=$(
+            {
+              grep -rhoE '(https?|mirror\+file):[^ ]+' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null || true
+              cat /etc/apt/apt-mirrors.txt 2>/dev/null || true
+              echo http://ppa.launchpadcontent.net/ http://ppa.launchpad.net/ http://keyserver.ubuntu.com/ http://api.launchpad.net/
+            } | grep -oE 'https?://[^/[:space:]]+' | sed -E 's#https?://##' | sort -u
+          )
+          echo "Blocking: $hosts"
+          for host in $hosts; do echo "127.0.0.1 $host" | sudo tee -a /etc/hosts >/dev/null; done
+          if timeout 30 sudo apt-get -o Acquire::Retries=0 -q update 2>&1 | tee /tmp/apt.log; then :; fi
+          grep -qE '^(Err|W):' /tmp/apt.log
+
+      - name: Run setup-tool-versions
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+          php-extensions: ${{ matrix.extensions }}
+
+      - name: Assert PHP works
+        run: php -r 'echo PHP_VERSION, PHP_EOL;'
+
+  php-options:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run setup-tool-versions
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+          php-coverage: none
+          php-extensions: ":redis"
+          php-ini-values: memory_limit=1234M
+
+      - name: Assert the PHP options were applied
+        run: |
+          php -m | tee /tmp/modules
+          if grep -qix -e xdebug -e redis /tmp/modules; then exit 1; fi
+          grep -qix intl /tmp/modules
+          test "$(php -r 'echo ini_get("memory_limit");')" = 1234M
+
+  # pnpm/action-setup rejects a packageManager field naming another version.
+  pnpm-package-manager:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - package-manager: pnpm@11.0.0
+            expected: failure
+          - package-manager: pnpm@12.18.0
+            expected: success
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Declare pnpm in package.json
+        env:
+          PACKAGE_MANAGER: ${{ matrix.package-manager }}
+        run: |
+          jq --arg pm "$PACKAGE_MANAGER" '.packageManager = $pm' package.json > package.json.new
+          mv package.json.new package.json
+
+      - name: Run setup-tool-versions
+        id: tools
+        continue-on-error: true
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+
+      - name: Assert the outcome
+        env:
+          OUTCOME: ${{ steps.tools.outcome }}
+          EXPECTED: ${{ matrix.expected }}
+        run: test "$OUTCOME" = "$EXPECTED"
+
+  # Tools without prebuilt binary support go to asdf, cached between runs.
+  asdf-cold:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      actions: write # delete the asdf cache entries so the run is cold
+    env: &asdf-env
+      FIXTURE: .github/fixtures/setup-tool-versions/asdf/.tool-versions
+    steps:
+      - uses: actions/checkout@v7
+
+      # On every ref: a pull request run also restores main's entries.
+      - name: Delete the asdf cache entries from earlier runs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/$GITHUB_REPOSITORY/actions/caches?per_page=100" \
+            --jq '.actions_caches[] | select(.key | contains("-setup-tool-versions-asdf-")) | .id' |
+            while read -r id; do gh api -X DELETE "repos/$GITHUB_REPOSITORY/actions/caches/$id"; done
+
+      - name: Run setup-tool-versions
+        id: tools
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+
+      - &assert-asdf
+        name: Assert prebuilt and asdf tools
+        env:
+          ASDF_TOOLS: ${{ steps.tools.outputs.asdf-tools }}
+          CACHE_HIT: ${{ steps.tools.outputs.asdf-cache-hit }}
+          EXPECTED_CACHE_HIT: ${{ github.job == 'asdf-warm' }}
+        run: |
+          requested() { awk -v tool="$1" '$1 == tool { print $2 }' "$GITHUB_WORKSPACE/$FIXTURE"; }
+          printf 'asdf tools:\n%s\n' "$ASDF_TOOLS"
+          test "$(printf '%s\n' "$ASDF_TOOLS" | cut -d' ' -f1 | tr '\n' ' ')" = "shellcheck python "
+          if [ "$EXPECTED_CACHE_HIT" = true ]; then test "$CACHE_HIT" = true; else test "$CACHE_HIT" != true; fi
+          # Prebuilt tools are not shadowed by asdf shims.
+          for tool in php node pnpm; do
+            case "$(command -v "$tool")" in "$HOME/.asdf/"*) exit 1 ;; esac
+          done
+          test "$(node --version)" = "v$(requested nodejs)"
+          # asdf tools work outside the directory of the .tool-versions file.
+          cd "$RUNNER_TEMP"
+          shellcheck --version | grep -q "version: $(requested shellcheck)"
+          test "$(python --version)" = "Python $(requested python)"
+
+  asdf-warm:
+    needs: asdf-cold
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env: *asdf-env
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run setup-tool-versions
+        id: tools
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+
+      - *assert-asdf
+
+  # Opt-in: a failing prebuilt install is retried with asdf. pnpm/action-setup
+  # is made to fail with a conflicting packageManager field.
+  asdf-fallback:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Declare a different pnpm version in package.json
+        run: |
+          jq '.packageManager = "pnpm@11.0.0"' package.json > package.json.new
+          mv package.json.new package.json
+
+      - name: Run setup-tool-versions
+        id: tools
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: ${{ env.FIXTURE }}
+          asdf-fallback: "true"
+
+      - name: Assert pnpm came from asdf
+        env:
+          ASDF_TOOLS: ${{ steps.tools.outputs.asdf-tools }}
+        run: |
+          test "$ASDF_TOOLS" = "pnpm $(awk '$1 == "pnpm" { print $2 }' "$FIXTURE")"
+          cd "$RUNNER_TEMP"
+          case "$(command -v pnpm)" in "$HOME/.asdf/"*) ;; *) exit 1 ;; esac
+          test "$(pnpm --version)" = "$(awk '$1 == "pnpm" { print $2 }' "$GITHUB_WORKSPACE/$FIXTURE")"
+
+  invalid-version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Run setup-tool-versions
+        id: tools
+        continue-on-error: true
+        uses: ./setup-tool-versions
+        with:
+          tool-versions-path: .github/fixtures/setup-tool-versions/invalid/.tool-versions
+
+      - name: Assert the action failed
+        env:
+          OUTCOME: ${{ steps.tools.outcome }}
+        run: test "$OUTCOME" = failure

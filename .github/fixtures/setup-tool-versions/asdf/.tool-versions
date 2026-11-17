@@ -1,0 +1,6 @@
+nodejs 26.13.0
+pnpm 12.18.0
+php 8.4.16
+# Without prebuilt binary support: installed with asdf
+shellcheck 0.11.0
+python 3.13.18
