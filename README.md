@@ -168,19 +168,18 @@ hard limit of 2 minutes for `apt-get update` and 5 minutes for `apt-get install`
 so an unreachable Ubuntu mirror fails the step within about 7 minutes instead of
 hanging the job. A healthy run of the step takes well under a minute.
 
-The list is php-build's, plus `libgd-dev`:
+The list is exactly php-build's, with nothing added or removed:
 
 - **Source:** the `debian|ubuntu)` branch of
   [`install-dependencies.sh`](https://github.com/php-build/php-build/blob/2fecc9da7425e66307fca0341267a239c4502d25/install-dependencies.sh)
   in php-build/php-build, copied at commit
   `2fecc9da7425e66307fca0341267a239c4502d25` (2026-05-07). The asdf PHP plugin
   compiles PHP with php-build.
-- **`libgd-dev`** is our own addition. Up to asdf-php's rewrite onto php-build
-  (asdf-community/asdf-php@efb4ccdae2, 2026-11-05) the plugin always configured
-  PHP with `--with-external-gd`, which links the GD extension against the system
-  libgd and fails without its headers. The rewritten plugin builds GD from PHP's
-  bundled copy, so the package is probably no longer needed; it stays until a
-  build without it has been verified.
+- **No `libgd-dev`:** the list used to add it, because asdf-php configured PHP
+  with `--with-external-gd` (GD linked against the system libgd) until its rewrite
+  onto php-build (asdf-community/asdf-php@efb4ccdae2, 2026-11-05). The rewritten
+  plugin builds GD from PHP's bundled copy; builds with and without the package
+  were identical.
 
 ##### Updating the PHP build dependencies
 
@@ -198,11 +197,11 @@ The list is php-build's, plus `libgd-dev`:
    Without `gh`, fetch both versions with
    `curl -fsSL https://raw.githubusercontent.com/php-build/php-build/<sha>/install-dependencies.sh`.
    No output from `diff` means nothing to do.
-2. Copy the package names from the `apt-get install` command in the
-   `debian|ubuntu)` branch into the `packages` array in
-   `cached-asdf/php-build-deps.sh`. Keep upstream's order and keep
-   `libgd-dev` last, under its comment. Changes to the other branches (RHEL, Arch,
-   macOS) don't concern us; GitHub's Linux runners are Ubuntu.
+2. Replace the `packages` array in `cached-asdf/php-build-deps.sh` with the package
+   names from the `apt-get install` command in the `debian|ubuntu)` branch, one per
+   line, in upstream's order. The array is a plain copy of that list, so `diff`ing
+   it against upstream's lines is a complete check. Changes to the other branches
+   (RHEL, Arch, macOS) don't concern us; GitHub's Linux runners are Ubuntu.
 3. Replace the recorded SHA (and date) with `$NEW` in the script's comment and in this
    section, in the same commit as the package changes.
 4. Open a pull request: the "Test cached-asdf PHP build" workflow
