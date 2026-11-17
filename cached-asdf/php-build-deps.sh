@@ -5,7 +5,7 @@ set -euo pipefail
 
 # Debian/Ubuntu package list vendored from php-build's install-dependencies.sh
 # (the `debian|ubuntu)` branch) at php-build/php-build@2fecc9da7425e66307fca0341267a239c4502d25,
-# plus our own libgd-dev. See "Updating the PHP build dependencies" in the README.
+# unchanged. See "Updating the PHP build dependencies" in the README.
 packages=(
   autoconf
   bash
@@ -32,8 +32,6 @@ packages=(
   pkg-config
   re2c
   zlib1g-dev
-  # Not in php-build's list, see the README.
-  libgd-dev
 )
 # Bound network waits so an unreachable mirror fails the step within
 # minutes instead of hanging. The retry and timeout values match what

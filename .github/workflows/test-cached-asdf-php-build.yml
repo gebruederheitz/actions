@@ -28,33 +28,18 @@ concurrency:
 
 jobs:
   build:
-    name: PHP ${{ matrix.php }}${{ !matrix.libgd-dev && ' without libgd-dev' || '' }}
+    name: PHP ${{ matrix.php }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { php: "8.2", libgd-dev: true }
-          - { php: "8.3", libgd-dev: true }
-          - { php: "8.4", libgd-dev: true }
-          - { php: "8.5", libgd-dev: true }
-          # Is libgd-dev still needed now that asdf-php builds the bundled GD?
-          - { php: "8.2", libgd-dev: false }
-          - { php: "8.5", libgd-dev: false }
+        php: ["8.2", "8.3", "8.4", "8.5"]
     runs-on: ubuntu-latest
     timeout-minutes: 40
     steps:
       - uses: actions/checkout@v7
 
-      - name: Install PHP build-time dependencies (cached-asdf/php-build-deps.sh)
-        env:
-          WITH_LIBGD_DEV: ${{ matrix.libgd-dev }}
-        run: |
-          cp cached-asdf/php-build-deps.sh "$RUNNER_TEMP/deps.sh"
-          if [ "$WITH_LIBGD_DEV" != true ]; then
-            sed -i '/^[[:space:]]*libgd-dev[[:space:]]*$/d' "$RUNNER_TEMP/deps.sh"
-            if grep -q 'libgd-dev$' "$RUNNER_TEMP/deps.sh"; then exit 1; fi
-          fi
-          bash "$RUNNER_TEMP/deps.sh"
+      - name: Install PHP build-time dependencies
+        run: cached-asdf/php-build-deps.sh
 
       - name: Install asdf
         uses: asdf-vm/actions/setup@v4

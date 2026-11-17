@@ -113,6 +113,6 @@ jobs:
           CACHE_HIT: ${{ steps.asdf.outputs.cache-hit }}
         run: |
           test "$CACHE_HIT" != "true"
-          dpkg-query -W libgd-dev libmcrypt-dev libonig-dev libtidy-dev re2c
+          dpkg-query -W libmcrypt-dev libonig-dev libtidy-dev libzip-dev re2c
 
       - *assert-saved
