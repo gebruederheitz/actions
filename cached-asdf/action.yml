@@ -35,6 +35,10 @@ outputs:
       "true" when the asdf cache was restored for the exact .tool-versions hash, in
       which case nothing was installed.
     value: ${{ steps.asdf-cache.outputs.cache-hit }}
+  cache-key:
+    description: >
+      The asdf cache key, e.g. "Linux-X64-ubuntu-26.04-asdf-<hash of .tool-versions>".
+    value: ${{ steps.asdf-cache.outputs.cache-primary-key }}
 runs:
   using: composite
   steps:
@@ -43,6 +47,13 @@ runs:
       uses: asdf-vm/actions/setup@v4
       with:
         asdf_version: ${{ inputs.asdf-version }}
+    # Compiled languages link against the runner's system libraries, so the
+    # cache must not cross OS releases: a PHP compiled on Ubuntu 24.04 fails on
+    # 26.04 (libxml2.so.2 missing) once ubuntu-latest moves on.
+    - name: Determine the OS release
+      id: os
+      shell: bash
+      run: echo "release=$(. /etc/os-release && echo "$ID-$VERSION_ID")" >> "$GITHUB_OUTPUT"
     # Restore and save are separate steps (instead of actions/cache) so the
     # compiled languages are saved right after installing them, even if a later
     # step of the job fails. The prefix restore key is deliberate: when only one
@@ -53,9 +64,9 @@ runs:
       uses: actions/cache/restore@v6
       with:
         path: ~/.asdf/
-        key: ${{ runner.os }}-asdf-${{ hashFiles('**/.tool-versions') }}
+        key: ${{ runner.os }}-${{ runner.arch }}-${{ steps.os.outputs.release }}-asdf-${{ hashFiles('**/.tool-versions') }}
         restore-keys: |
-          ${{ runner.os }}-asdf-
+          ${{ runner.os }}-${{ runner.arch }}-${{ steps.os.outputs.release }}-asdf-
     - name: Check for PHP
       id: check-php
       if: steps.asdf-cache.outputs.cache-hit != 'true'
